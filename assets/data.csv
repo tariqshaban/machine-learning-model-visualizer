@@ -1,0 +1,15 @@
+﻿ID,Outlook,Temperature,Humidity,Windy,Play
+1,Sunny,100,High,No,N
+2,Sunny,110,High,Yes,N
+3,Overcast,110,High,No,Y
+4,Rainy,75,High,No,Y
+5,Rainy,40,Normal,No,Y
+6,Rainy,40,Normal,Yes,N
+7,Overcast,45,Normal,Yes,Y
+8,Sunny,70,High,No,N
+9,Sunny,40,Normal,No,Y
+10,Rainy,70,Normal,No,Y
+11,Sunny,70,Normal,Yes,Y
+12,Overcast,70,High,Yes,Y
+13,Overcast,95,Normal,No,Y
+14,Rainy,65,High,Yes,N
