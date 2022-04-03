@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import plotly
 from sklearn import tree, preprocessing, metrics
+from sklearn.cluster import KMeans
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder
 import matplotlib.pyplot as plt
@@ -13,9 +14,9 @@ import plotly.express as px
 
 import xgboost as xgb
 from sklearn.svm import SVC
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
+from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier, BaggingClassifier, BaggingRegressor
 from sklearn.linear_model import LogisticRegression, LinearRegression
 
 from enums.model import Model
@@ -34,10 +35,10 @@ class MachineLearningModelProvider:
         __split_data            Specify whether to split data on train dataset and test dataset
         __data_train            Stores the training dataset
         __data_test             Stores the testing dataset
-        __classifier            Acts as a cache for storing the classification model
+        __model                 Acts as a cache for storing the model
         __selected_criterion    The desired criterion [Criterion.GINI, Criterion.ENTROPY]
         __selected_encoding     The desired categorical data encoding [Encoding.LABEL_ENCODER, Encoding.OneHotEncoder]
-        __unwanted_columns      The columns that should be omitted from the classification process
+        __unwanted_columns      The columns that should be omitted from the model
         __label                 The table's label column name
 
     Methods
@@ -45,11 +46,13 @@ class MachineLearningModelProvider:
         set_table_directory(directory: str):
             Specify the directory from where to read the assets from.
         set_unwanted_columns(unwanted_columns: list):
-            Specify the columns that should be omitted from the classification process.
+            Specify the columns that should be omitted from the model.
         set_label(label: str):
             Specify the table's label column name.
-        set_selected_classifier(preferred_classifier: Model):
-            Specify the preferred classifier.
+        set_selected_model(preferred_model: Model):
+            Specify the preferred model.
+        set_model_seed(seed: int = None):
+            Specify the seed.
         __get_categorical_columns() -> list:
             Returns the column names that contains categorical data types.
         __get_numerical_columns() -> list:
@@ -61,7 +64,7 @@ class MachineLearningModelProvider:
         get_data_raw() -> pd.DataFrame:
             Calls __get_data_raw() if __data_raw is None, otherwise,
             it retrieves __data_raw immediately.
-        get_train_test(test_size: int = 0.3) -> list:
+        set_train_test(test_size: int = 0.3) -> list:
             Splits the raw data into a training dataset and testing dataset.
         __label_encode(df: pd.DataFrame) -> pd.DataFrame:
             Converts categorical values into numerical values,
@@ -69,13 +72,13 @@ class MachineLearningModelProvider:
         __one_hot_encode(df: pd.DataFrame) -> pd.DataFrame:
             Converts categorical values into numerical values,
             by replacing it with values  between 0 and 1 on multiple columns.
-        __get_tree_classifier(criterion: Criterion = Criterion.GINI,
-                    encoding: Encoding = Encoding.LABEL_ENCODER):
-            Performs the tree classification process on the dataframe.
-        get_tree_classifier(criterion: Criterion = Criterion.GINI,
-                    encoding: Encoding = Encoding.LABEL_ENCODER):
-            Calls __get_tree_classifier() if __classifier is None, otherwise,
-            it retrieves __classifier immediately.
+        __get_model(criterion: Criterion = Criterion.GINI,
+                    encoding: Encoding = Encoding.LABEL_ENCODER, clusters: int = 8, neighbors: int = 5):
+            Performs the modeling process on the dataframe.
+        get_model(criterion: Criterion = Criterion.GINI,
+                    encoding: Encoding = Encoding.LABEL_ENCODER, clusters: int = 8, neighbors: int = 5):
+            Calls __get_model() if __model is None, otherwise,
+            it retrieves __model immediately.
         __print_legend():
             Displays a mapping between the values that has been converted from discrete to continues.
         print_tree(criterion: Criterion = Criterion.GINI,
@@ -86,9 +89,9 @@ class MachineLearningModelProvider:
             Visualizes the tree that the classifier has built as a plot.
         predict(data: pd.DataFrame, criterion: Criterion = Criterion.GINI,
                     encoding: Encoding = Encoding.LABEL_ENCODER) -> list:
-            Deploys the classifier to predict a new value.
+            Deploys the model to predict a new value.
         get_accuracy(criterion: Criterion = Criterion.GINI, encoding: Encoding = Encoding.LABEL_ENCODER) -> float:
-            Return the mean accuracy on the given test data and labels.
+            Return the accuracy on the given test data and labels.
         save_model():
             Saves the model locally for future prediction.
         plot_classification_roc_curve():
@@ -102,10 +105,11 @@ class MachineLearningModelProvider:
     __split_data: bool = False
     __data_train: pd.DataFrame = None
     __data_test: pd.DataFrame = None
-    __classifier = None
+    __model = None
+    __model_seed: int = None
     __selected_criterion: Criterion = ''
     __selected_encoding: Encoding = ''
-    __selected_classifier: Model = Model.DECISION_TREE_CLASSIFIER
+    __selected_model: Model = Model.DECISION_TREE_CLASSIFIER
 
     __unwanted_columns: list = []
     __label: str = ''
@@ -119,11 +123,16 @@ class MachineLearningModelProvider:
         """
         if directory != '':
             MachineLearningModelProvider.__table_directory = directory
+            MachineLearningModelProvider.__unwanted_columns = []
+            MachineLearningModelProvider.__label = ''
+            MachineLearningModelProvider.__selected_model = Model.DECISION_TREE_CLASSIFIER
+            MachineLearningModelProvider.__model = None
+            MachineLearningModelProvider.__model_seed = None
 
     @staticmethod
     def set_unwanted_columns(unwanted_columns: list):
         """
-        Specify the columns that should be omitted from the classification process.
+        Specify the columns that should be omitted from the model.
 
         :param str unwanted_columns: The undesired columns.
         """
@@ -141,17 +150,28 @@ class MachineLearningModelProvider:
             MachineLearningModelProvider.__label = label
 
     @staticmethod
-    def set_selected_classifier(preferred_classifier: Model):
+    def set_selected_model(preferred_model: Model):
         """
-        Specify the preferred classifier.
+        Specify the preferred model.
 
-        :param Model preferred_classifier: Specify the preferred classifier.
+        :param Model preferred_model: Specify the preferred model.
         """
 
-        if preferred_classifier not in [e for e in Model]:
-            raise ValueError('Invalid classifier value')
+        if preferred_model not in [e for e in Model]:
+            raise ValueError('Invalid model value')
 
-        MachineLearningModelProvider.__selected_classifier = preferred_classifier
+        MachineLearningModelProvider.__model = None
+        MachineLearningModelProvider.__selected_model = preferred_model
+
+    @staticmethod
+    def set_model_seed(seed: int = None):
+        """
+        Specify the seed.
+
+        :param int seed: Controls the shuffling applied to the data before applying the split.
+        """
+
+        MachineLearningModelProvider.__model_seed = seed
 
     @staticmethod
     def __get_categorical_columns() -> list:
@@ -194,16 +214,16 @@ class MachineLearningModelProvider:
         :return list: List of features
         """
 
-        classifier: DecisionTreeClassifier = MachineLearningModelProvider.get_tree_classifier(
+        model: DecisionTreeClassifier = MachineLearningModelProvider.get_model(
             criterion=MachineLearningModelProvider.__selected_criterion,
             encoding=MachineLearningModelProvider.__selected_encoding
         )
 
-        if MachineLearningModelProvider.__selected_classifier == Model.XGB_CLASSIFIER or \
-                MachineLearningModelProvider.__selected_classifier == Model.XGB_REGRESSOR:
-            features = classifier.get_booster().feature_names
+        if MachineLearningModelProvider.__selected_model == Model.XGB_CLASSIFIER or \
+                MachineLearningModelProvider.__selected_model == Model.XGB_REGRESSOR:
+            features = model.get_booster().feature_names
         else:
-            features = classifier.feature_names_in_.tolist()
+            features = model.feature_names_in_.tolist()
 
         return features
 
@@ -216,6 +236,11 @@ class MachineLearningModelProvider:
         """
 
         MachineLearningModelProvider.__data_raw = pd.read_csv(MachineLearningModelProvider.__table_directory)
+
+        df = MachineLearningModelProvider.__data_raw
+
+        for i in df.columns[df.isnull().any(axis=0)]:
+            df[i].fillna(df[i].mean(), inplace=True)
 
         MachineLearningModelProvider.__data_raw \
             .drop(MachineLearningModelProvider.__unwanted_columns, axis=1, inplace=True)
@@ -236,11 +261,12 @@ class MachineLearningModelProvider:
         return MachineLearningModelProvider.__data_raw
 
     @staticmethod
-    def get_train_test(test_size: float = 0.3) -> list:
+    def set_train_test(test_size: float = 0.3, seed: int = None) -> list:
         """
         Splits the raw data into a training dataset and testing dataset.
 
         :param int test_size: The percentage of the training set in relation to the testing set.
+        :param int seed: Controls the shuffling applied to the data before applying the split.
         :return list: The table as a dataframe.
         """
 
@@ -250,7 +276,8 @@ class MachineLearningModelProvider:
             train_test_split(
                 data.loc[:, data.columns != MachineLearningModelProvider.__label],
                 data[MachineLearningModelProvider.__label],
-                test_size=test_size
+                test_size=test_size,
+                random_state=seed
             )
 
         var_train[MachineLearningModelProvider.__label] = res_train
@@ -303,15 +330,19 @@ class MachineLearningModelProvider:
         return output
 
     @staticmethod
-    def __get_tree_classifier(criterion: Criterion = Criterion.GINI,
-                              encoding: Encoding = Encoding.LABEL_ENCODER):
+    def __get_model(criterion: Criterion = Criterion.GINI,
+                    encoding: Encoding = Encoding.LABEL_ENCODER,
+                    clusters: int = 8,
+                    neighbors: int = 5):
         """
-        Performs the tree classification process on the dataframe.
+        Performs the modeling process on the dataframe.
 
         :param str criterion: Specify the desired criterion [Criterion.GINI, Criterion.ENTROPY].
         :param str encoding: Specify the desired categorical data encoding
                                 [Encoding.LABEL_ENCODER, Encoding.OneHotEncoder].
-        :return: A classifier resulted from the decision tree process.
+        :param int clusters: Specify the number of clusters in a K-Means model.
+        :param int neighbors: Specify the number of neighbors in a KNN model.
+        :return: A fitted model.
         """
 
         if criterion not in [e for e in Criterion]:
@@ -329,50 +360,66 @@ class MachineLearningModelProvider:
         elif encoding == Encoding.ONE_HOT_ENCODER:
             data = MachineLearningModelProvider.__one_hot_encode(data)
 
-        if MachineLearningModelProvider.__selected_classifier == Model.SVC:
-            clf = SVC(verbose=2)
-        elif MachineLearningModelProvider.__selected_classifier == Model.LOGISTIC_REGRESSION:
-            clf = LogisticRegression()
-        elif MachineLearningModelProvider.__selected_classifier == Model.DECISION_TREE_CLASSIFIER:
-            clf = DecisionTreeClassifier(criterion=criterion.value)
-        elif MachineLearningModelProvider.__selected_classifier == Model.RANDOM_FOREST_REGRESSOR:
-            clf = RandomForestRegressor()
-        elif MachineLearningModelProvider.__selected_classifier == Model.K_NEIGHBORS_CLASSIFIER:
-            clf = KNeighborsClassifier(n_neighbors=5)
-        elif MachineLearningModelProvider.__selected_classifier == Model.LINEAR_REGRESSION:
+        if MachineLearningModelProvider.__selected_model == Model.BAGGING_CLASSIFIER:
+            clf = BaggingClassifier(random_state=MachineLearningModelProvider.__model_seed)
+        elif MachineLearningModelProvider.__selected_model == Model.BAGGING_REGRESSION:
+            clf = BaggingRegressor(random_state=MachineLearningModelProvider.__model_seed)
+        elif MachineLearningModelProvider.__selected_model == Model.SVC:
+            clf = SVC(random_state=MachineLearningModelProvider.__model_seed)
+        elif MachineLearningModelProvider.__selected_model == Model.LOGISTIC_REGRESSION:
+            clf = LogisticRegression(random_state=MachineLearningModelProvider.__model_seed)
+        elif MachineLearningModelProvider.__selected_model == Model.DECISION_TREE_CLASSIFIER:
+            clf = DecisionTreeClassifier(criterion=criterion.value,
+                                         random_state=MachineLearningModelProvider.__model_seed)
+        elif MachineLearningModelProvider.__selected_model == Model.DECISION_TREE_REGRESSOR:
+            clf = DecisionTreeRegressor()
+        elif MachineLearningModelProvider.__selected_model == Model.RANDOM_FOREST_CLASSIFIER:
+            clf = RandomForestClassifier(random_state=MachineLearningModelProvider.__model_seed)
+        elif MachineLearningModelProvider.__selected_model == Model.RANDOM_FOREST_REGRESSOR:
+            clf = RandomForestRegressor(random_state=MachineLearningModelProvider.__model_seed)
+        elif MachineLearningModelProvider.__selected_model == Model.K_NEIGHBORS_CLASSIFIER:
+            clf = KNeighborsClassifier(n_neighbors=neighbors)
+        elif MachineLearningModelProvider.__selected_model == Model.K_NEIGHBORS_REGRESSOR:
+            clf = KNeighborsRegressor(n_neighbors=neighbors)
+        elif MachineLearningModelProvider.__selected_model == Model.K_MEANS:
+            clf = KMeans(n_clusters=clusters, random_state=MachineLearningModelProvider.__model_seed)
+        elif MachineLearningModelProvider.__selected_model == Model.LINEAR_REGRESSION:
             clf = LinearRegression()
-        elif MachineLearningModelProvider.__selected_classifier == Model.XGB_CLASSIFIER:
-            clf = xgb.XGBClassifier()
+        elif MachineLearningModelProvider.__selected_model == Model.XGB_CLASSIFIER:
+            clf = xgb.XGBClassifier(random_state=MachineLearningModelProvider.__model_seed)
         else:
             clf = xgb.XGBRegressor(booster='gblinear')
 
         clf.fit(data.loc[:, ~data.columns.isin([MachineLearningModelProvider.__label])],
                 data[MachineLearningModelProvider.__label])
 
-        MachineLearningModelProvider.__classifier = clf
+        MachineLearningModelProvider.__model = clf
         MachineLearningModelProvider.__selected_criterion = criterion
         MachineLearningModelProvider.__selected_encoding = encoding
 
-        return MachineLearningModelProvider.__classifier
+        return MachineLearningModelProvider.__model
 
     @staticmethod
-    def get_tree_classifier(criterion: Criterion = Criterion.GINI,
-                            encoding: Encoding = Encoding.LABEL_ENCODER):
+    def get_model(criterion: Criterion = Criterion.GINI,
+                  encoding: Encoding = Encoding.LABEL_ENCODER, clusters: int = 8, neighbors: int = 5):
         """
-        Calls __get_tree_classifier() if __classifier is None, otherwise, it retrieves __classifier immediately.
+        Calls __get_model() if __model is None, otherwise, it retrieves __model immediately.
 
         :param str criterion: Specify the desired criterion [Criterion.GINI, Criterion.ENTROPY].
         :param str encoding: Specify the desired categorical data encoding
                                 [Encoding.LABEL_ENCODER, Encoding.OneHotEncoder].
-        :return: A classifier resulted from the decision tree process.
+        :param int clusters: Specify the number of clusters in a K-Means model.
+        :param int neighbors: Specify the number of neighbors in a KNN model.
+        :return: A fitted model.
         """
 
-        if MachineLearningModelProvider.__classifier is None or \
+        if MachineLearningModelProvider.__model is None or \
                 MachineLearningModelProvider.__selected_criterion != criterion or \
                 MachineLearningModelProvider.__selected_encoding != encoding:
-            MachineLearningModelProvider.__get_tree_classifier(criterion=criterion, encoding=encoding)
+            MachineLearningModelProvider.__get_model(criterion=criterion, encoding=encoding,
+                                                     clusters=clusters, neighbors=neighbors)
 
-        return MachineLearningModelProvider.__classifier
+        return MachineLearningModelProvider.__model
 
     @staticmethod
     def __print_legend():
@@ -415,14 +462,14 @@ class MachineLearningModelProvider:
         :return DecisionTreeClassifier: A classifier resulted from the decision tree process.
         """
 
-        classifier = MachineLearningModelProvider.get_tree_classifier(criterion=criterion, encoding=encoding)
+        model = MachineLearningModelProvider.get_model(criterion=criterion, encoding=encoding)
 
         text_representation = \
-            tree.export_text(classifier, feature_names=MachineLearningModelProvider.__get_feature_names())
+            tree.export_text(model, feature_names=MachineLearningModelProvider.__get_feature_names())
 
         print(text_representation)
 
-        return classifier
+        return model
 
     @staticmethod
     def plot_tree(criterion: Criterion = Criterion.GINI, encoding: Encoding = Encoding.LABEL_ENCODER) \
@@ -436,22 +483,25 @@ class MachineLearningModelProvider:
         :return DecisionTreeClassifier: A classifier resulted from the decision tree process.
         """
 
-        classifier = MachineLearningModelProvider.get_tree_classifier(criterion=criterion, encoding=encoding)
+        model = MachineLearningModelProvider.get_model(criterion=criterion, encoding=encoding)
 
-        tree.plot_tree(classifier,
+        plt.figure(figsize=(10, 8))
+
+        tree.plot_tree(model,
                        feature_names=MachineLearningModelProvider.__get_feature_names(),
                        filled=True)
 
         MachineLearningModelProvider.__print_legend()
+
         plt.show()
 
-        return classifier
+        return model
 
     @staticmethod
     def predict(data: pd.DataFrame, criterion: Criterion = Criterion.GINI,
                 encoding: Encoding = Encoding.LABEL_ENCODER) -> list:
         """
-        Deploys the classifier to predict a new value.
+        Deploys the model to predict a new value.
 
         :param pd.DataFrame data: The label-less dataframe to predict.
         :param str criterion: Specify the desired criterion [Criterion.GINI, Criterion.ENTROPY].
@@ -463,7 +513,7 @@ class MachineLearningModelProvider:
         data.columns = [x for x in MachineLearningModelProvider.get_data_raw().columns if
                         x != MachineLearningModelProvider.__label]
 
-        classifier = MachineLearningModelProvider.get_tree_classifier(criterion=criterion, encoding=encoding)
+        model = MachineLearningModelProvider.get_model(criterion=criterion, encoding=encoding)
 
         if encoding == Encoding.LABEL_ENCODER:
             data = MachineLearningModelProvider.__label_encode(data)
@@ -480,14 +530,12 @@ class MachineLearningModelProvider:
 
         data = data[MachineLearningModelProvider.__get_feature_names()]
 
-        print(data)
-
-        return list(classifier.predict(data))
+        return list(model.predict(data))
 
     @staticmethod
     def get_accuracy(criterion: Criterion = Criterion.GINI, encoding: Encoding = Encoding.LABEL_ENCODER) -> float:
         """
-        Return the mean accuracy on the given test data and labels.
+        Return the accuracy on the given test data and labels.
 
         :param str criterion: Specify the desired criterion [Criterion.GINI, Criterion.ENTROPY].
         :param str encoding: Specify the desired categorical data encoding
@@ -496,9 +544,9 @@ class MachineLearningModelProvider:
         """
 
         if not MachineLearningModelProvider.__split_data:
-            raise ValueError('Model was not split; specify the split first using \'get_train_test\' method.')
+            raise ValueError('Model was not split; specify the split first using \'set_train_test\' method.')
 
-        classifier = MachineLearningModelProvider.get_tree_classifier(criterion=criterion, encoding=encoding)
+        model = MachineLearningModelProvider.get_model(criterion=criterion, encoding=encoding)
 
         data_test = MachineLearningModelProvider.__data_test
 
@@ -520,7 +568,7 @@ class MachineLearningModelProvider:
             data_test_features[
                 data_test_features.columns.intersection(MachineLearningModelProvider.__get_feature_names())]
 
-        score = classifier.score(data_test_features, data_test_label)
+        score = model.score(data_test_features, data_test_label)
 
         return score
 
@@ -530,7 +578,7 @@ class MachineLearningModelProvider:
         Compute Receiver operating characteristic (ROC) for classification models.
         """
 
-        classifier = MachineLearningModelProvider.get_tree_classifier(
+        model = MachineLearningModelProvider.get_model(
             criterion=MachineLearningModelProvider.__selected_criterion,
             encoding=MachineLearningModelProvider.__selected_encoding)
 
@@ -550,7 +598,7 @@ class MachineLearningModelProvider:
         data_test_features = data_test.loc[:, data_test.columns != MachineLearningModelProvider.__label]
         data_test_label = data_test[MachineLearningModelProvider.__label]
 
-        probs = classifier.predict_proba(data_test_features)
+        probs = model.predict_proba(data_test_features)
         predicts = probs[:, 1]
         fpr, tpr, threshold = metrics.roc_curve(data_test_label, predicts)
         roc_auc = metrics.auc(fpr, tpr)
@@ -590,9 +638,9 @@ class MachineLearningModelProvider:
         Compute a scatter plot for regression models.
         """
 
-        classifier = MachineLearningModelProvider. \
-            get_tree_classifier(criterion=MachineLearningModelProvider.__selected_criterion,
-                                encoding=MachineLearningModelProvider.__selected_encoding)
+        model = MachineLearningModelProvider. \
+            get_model(criterion=MachineLearningModelProvider.__selected_criterion,
+                      encoding=MachineLearningModelProvider.__selected_encoding)
 
         data_test = MachineLearningModelProvider.__data_test
 
@@ -610,13 +658,13 @@ class MachineLearningModelProvider:
         data_test_features = data_test.loc[:, data_test.columns != MachineLearningModelProvider.__label]
         data_test_label = data_test[MachineLearningModelProvider.__label]
 
-        y_pred = classifier.predict(data_test_features)
+        y_pred = model.predict(data_test_features)
 
         print("MAE: {}".format(np.abs(data_test_label - y_pred).mean()))
         print("RMSE: {}".format(np.sqrt(((data_test_label - y_pred) ** 2).mean())))
 
-        coefficients = classifier.coef_
-        intercept = classifier.intercept_
+        coefficients = model.coef_
+        intercept = model.intercept_
         if hasattr(intercept, "__len__"):
             intercept = intercept[0]
         print("Equation: y = {:.2f} + {:.2f}x1 + {:.2f}x2".format(intercept, coefficients[0], coefficients[1]))
@@ -634,7 +682,7 @@ class MachineLearningModelProvider:
         df1 = pd.DataFrame(data={'shots': xx.ravel(),
                                  'shots_on_target': yy.ravel()
                                  })
-        prediction = classifier.predict(df1)
+        prediction = model.predict(df1)
         prediction = prediction.reshape(xx.shape)
 
         df.rename({'shots': 'Shots', 'shots_on_target': 'Shots on Target', 'label': 'Goals'}, axis=1, inplace=True)
@@ -685,4 +733,4 @@ class MachineLearningModelProvider:
         Saves the model locally for future prediction.
         """
 
-        joblib.dump(MachineLearningModelProvider.__classifier, 'model.pkl')
+        joblib.dump(MachineLearningModelProvider.__model, 'model.pkl')
