@@ -3,7 +3,7 @@ from enum import Enum
 
 class Model(Enum):
     """
-    Enumerate decision tree criterion
+    Enumerate classification and regression models
     """
 
     BAGGING_CLASSIFIER = 'BaggingClassifier'

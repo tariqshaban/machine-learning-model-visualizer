@@ -2,7 +2,7 @@ Applying Machine Learning Model on Structured Data
 ==============================
 This is a submission of **assignment 1** for the **CIS722** course.
 
-It contains the code necessary to conduct simple classification and clustering models.
+It contains the code necessary to conduct simple classification and regression models.
 
 Getting Started
 ------------

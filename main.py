@@ -20,7 +20,7 @@ MachineLearningModelProvider.set_unwanted_columns(['ID'])
 # 5) Specify the table's label, this will inform the model of which column that should be treated as the label
 MachineLearningModelProvider.set_label('Play')
 
-# 6) Specify the table's label, this will inform the model of which column that should be treated as the label
+# 6) Specify the train-test splitting parameters
 MachineLearningModelProvider.set_train_test(test_size=0.3, seed=43)
 ########################################################################################################################
 ########################################################################################################################
